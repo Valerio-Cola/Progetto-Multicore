@@ -35,7 +35,7 @@ double cp_Wtime(){
 	gettimeofday(&tv, NULL);
 	return tv.tv_sec + 1.0e-6 * tv.tv_usec;
 }
-
+ 
 /*
  * Utils: Random generator
  */

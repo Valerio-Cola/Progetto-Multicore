@@ -365,34 +365,31 @@ int main(int argc, char *argv[]) {
 		seq_matches[lind] = NOT_FOUND;
 	}
 
-	/* 5. Search for each pattern */
-	unsigned long start;
-	int pat;
-	#pragma omp parallel num_threads(8) shared(pat_found, seq_matches) 
-	{
-		
-		#pragma omp for private(start, pat) \
-		reduction(+:pat_matches) schedule(dynamic,1)
+		unsigned long start;
+		int pat;
+		#pragma omp parallel shared(pat_found, seq_matches)  // (1) 
+		{
+			// (2)
+			#pragma omp for private(start, pat, lind) \
+			reduction(+:pat_matches) schedule(dynamic,4)
 
-		for( pat=0; pat < pat_number; pat++ ) {
-			for( start=0; start <= seq_length - pat_length[pat]; start++) {
-				for( lind=0; lind<pat_length[pat]; lind++) {
-					if ( sequence[start + lind] != pattern[pat][lind] ) break;
+			for( pat=0; pat < pat_number; pat++ ) {
+				for( start=0; start <= seq_length - pat_length[pat]; start++) {
+					for( lind=0; lind<pat_length[pat]; lind++) {
+						if ( sequence[start + lind] != pattern[pat][lind] ) break;
+					}
+					if ( lind == pat_length[pat] ) {
+						pat_matches++;
+						pat_found[pat] = start;
+						break;
+					}
 				}
-				
-				if ( lind == pat_length[pat] ) {
-					pat_matches++;
-					pat_found[pat] = start;
-					break;
+				if ( pat_found[pat] != (unsigned long)NOT_FOUND ) {
+					#pragma omp critical // (3)
+					increment_matches( pat, pat_found, pat_length, seq_matches );
 				}
-			}
-
-			if ( pat_found[pat] != (unsigned long)NOT_FOUND ) {
-				#pragma omp critical
-				increment_matches( pat, pat_found, pat_length, seq_matches );
 			}
 		}
-	}
 
 	/* 7. Check sums */
 	unsigned long checksum_matches = 0;

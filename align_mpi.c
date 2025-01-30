@@ -5,12 +5,12 @@
  * MPI version
  *
  * Computacion Paralela, Grado en Informatica (Universidad de Valladolid)
- * 2023/2024
+ * 2023/2024 
  *
  * v1.3
  *
  * (c) 2024, Arturo Gonzalez-Escribano
- */
+ */ 
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -328,24 +328,23 @@ int main(int argc, char *argv[]) {
  * START HERE: DO NOT CHANGE THE CODE ABOVE THIS POINT 
  *
  */
+	// Inizialize MPI size
 	int size;
 	MPI_Comm_size( MPI_COMM_WORLD, &size );
 	
-	// Solo il rank 0 genera la sequenza e la invia a tutti gli altri processi
-
+	/* 2.1. Allocate and fill sequence */
 	char *sequence = (char *)malloc( sizeof(char) * seq_length );
 	if ( sequence == NULL ) {
 		fprintf(stderr,"\n-- Error allocating the sequence for size: %lu\n", seq_length );
 		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
 	}
 
+	// Only rank 0 generates the sequence and sends it to all other processes
 	if(rank == 0){
 		random = rng_new( seed );
 		generate_rng_sequence( &random, prob_G, prob_C, prob_A, sequence, seq_length);
 	}
-
 	MPI_Bcast(sequence, seq_length, MPI_CHAR, 0, MPI_COMM_WORLD);
-
 	MPI_Barrier( MPI_COMM_WORLD );
 
 #ifdef DEBUG
@@ -366,68 +365,71 @@ int main(int argc, char *argv[]) {
 	printf("-----------------\n\n");
 #endif // DEBUG
 
-	// Ognuno genera il proprio seq_matches 
+	/* 2.3.2. Other results related to the main sequence */
+	// Each rank allocate its own seq_matches
 	int *seq_matches;
 	seq_matches = (int *)malloc( sizeof(int) * seq_length );
 	if ( seq_matches == NULL ) {
 		fprintf(stderr,"\n-- Error allocating aux sequence structures for size: %lu\n", seq_length );
 		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
 	}
-	MPI_Barrier( MPI_COMM_WORLD );
 
-	// pat_number e seq_matches inizializzati a -1
+	/* 4. Initialize ancillary structures */
+	// Each rank allocate its own pat_found and initialize it to NOT_FOUND
 	for( ind=0; ind<pat_number; ind++) {
 		pat_found[ind] = (unsigned long)NOT_FOUND;
 	}
+	// Each rank allocate its own seq_matches and initialize it to NOT_FOUND
 	for( lind=0; lind<seq_length; lind++) {
 		seq_matches[lind] = NOT_FOUND;
 	}
-	MPI_Barrier( MPI_COMM_WORLD );
 
 
-	// Ognuno si prende tot pattern da cercare
+	// Each rank takes a number, the start and the last patterns to search
 	int my_patterns = pat_number/size;
-	int resto = pat_number % size;
-
-	// Si tiene traccia del primo e dell'ultimo pattern
+	int remainder = pat_number % size;
 	int my_first_pattern = rank * my_patterns;
 	
 	if(rank == size - 1){
-		my_patterns += resto;
+		my_patterns += remainder;
 	}
 
 	int my_last_pattern = my_first_pattern + my_patterns -1;
-
 	MPI_Barrier( MPI_COMM_WORLD );
 
-	// Ogni processo cerca i pattern assegnati
+	/* 5. Search for each pattern */
+	// Each rank searches for its own patterns
 	unsigned long start;
 	int pat;
 	for( pat = my_first_pattern; pat <= my_last_pattern; pat++ ) {
 
-		// Cerca il pattern pattern in tutta la sequenza
+		/* 5.1. For each posible starting position */
 		for( start=0; start <= seq_length - pat_length[pat]; start++) {
+			/* 5.1.1. For each pattern element */
 			for( lind=0; lind<pat_length[pat]; lind++) {
+				/* Stop this test when different nucleotids are found */
 				if ( sequence[start + lind] != pattern[pat][lind] ) break;
 			}
+			/* 5.1.2. Check if the loop ended with a match */
 			if ( lind == pat_length[pat] ) {
 				pat_matches++;
 				pat_found[pat] = start;				
 				break;
 			}
 		}
-
+		/* 5.2. Pattern found */
 		if ( pat_found[pat] != (unsigned long)NOT_FOUND ) {
+			/* 4.2.1. Increment the number of pattern matches on the sequence positions */
 			increment_matches( pat, pat_found, pat_length, seq_matches );
 		}
 	}
 
-	// Tutti i rank inviano i propri seq_matches al rank 0
+	// Each rank sends its own seq_matches to rank 0
 	if(rank > 0){
 		MPI_Send(seq_matches, seq_length, MPI_INT, 0, 0, MPI_COMM_WORLD);
 	}
 	
-	// Il rank 0 riceve i seq_matches e li somma con quelli degli altri rank
+	// Rank 0 reveices all the seq_matches from all the other ranks and sums them up
 	if (rank == 0) {
 		int *local_seq_matches;
 		local_seq_matches = (int *)malloc( sizeof(int) * seq_length );
@@ -451,7 +453,7 @@ int main(int argc, char *argv[]) {
 	}
 	MPI_Barrier( MPI_COMM_WORLD );
 	
-	// Ognuno invia i pattern trovati al rank 0
+	// Each rank sends its own pat_found to rank 0 but only the data that he processed
 	int send_counts[size];
 	send_counts[rank] = my_patterns;
 
@@ -463,22 +465,23 @@ int main(int argc, char *argv[]) {
 
 	MPI_Barrier( MPI_COMM_WORLD );
 
+	// Rank 0 receive all the pat_found from all the other ranks  
 	MPI_Gatherv(pat_found + my_first_pattern, my_patterns, MPI_UNSIGNED_LONG, pat_found, send_counts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
 	
-	// Ognuno invia al rank 0 il numero di pattern trovati sommandoli con la reduce
+	// Each rank sends its own pat_matches to rank 0 and rank 0 sums them up
 	int total_pat_matches = 0;
 	MPI_Reduce(&pat_matches, &total_pat_matches, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
 	MPI_Barrier( MPI_COMM_WORLD );
 
-	// Il rank 0 assegna il valore di total_pat_matches a pat_matches
+	// Rank 0 assing the value of total_pat_matches to pat_matches
 	if (rank == 0) {
 		pat_matches = total_pat_matches;
 	}
 
 	MPI_Barrier( MPI_COMM_WORLD );
 
-	// Calcolo checksum, sequenziale e non devono dare in output gli stessi checksum
+	/* 7. Check sums */
 	unsigned long checksum_matches = 0;
 	unsigned long checksum_found = 0;
 	if(rank == 0){

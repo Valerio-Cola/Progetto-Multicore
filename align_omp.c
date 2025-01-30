@@ -364,32 +364,42 @@ int main(int argc, char *argv[]) {
 	for( lind=0; lind<seq_length; lind++) {
 		seq_matches[lind] = NOT_FOUND;
 	}
+	
+	/* 5. Search for each pattern */
+	unsigned long start;
+	int pat;
 
-		unsigned long start;
-		int pat;
-		#pragma omp parallel shared(pat_found, seq_matches)  // (1) 
-		{
-			// (2)
-			#pragma omp for private(start, pat, lind) \
-			reduction(+:pat_matches) schedule(dynamic,4)
-
-			for( pat=0; pat < pat_number; pat++ ) {
-				for( start=0; start <= seq_length - pat_length[pat]; start++) {
-					for( lind=0; lind<pat_length[pat]; lind++) {
-						if ( sequence[start + lind] != pattern[pat][lind] ) break;
-					}
-					if ( lind == pat_length[pat] ) {
-						pat_matches++;
-						pat_found[pat] = start;
-						break;
-					}
+	// Parallelize the block of code that searches for each pattern
+	#pragma omp parallel shared(pat_found, seq_matches) 
+	{
+		
+		// Parallelize the first for loop 
+		#pragma omp for private(start, pat, lind) \
+		reduction(+:pat_matches) schedule(dynamic,4)
+		
+		/* 5.1. For each posible starting position */
+		for( pat=0; pat < pat_number; pat++ ) {
+			for( start=0; start <= seq_length - pat_length[pat]; start++) {
+				for( lind=0; lind<pat_length[pat]; lind++) {
+					/* Stop this test when different nucleotids are found */
+					if ( sequence[start + lind] != pattern[pat][lind] ) break;
 				}
-				if ( pat_found[pat] != (unsigned long)NOT_FOUND ) {
-					#pragma omp critical // (3)
-					increment_matches( pat, pat_found, pat_length, seq_matches );
+				/* 5.1.2. Check if the loop ended with a match */
+				if ( lind == pat_length[pat] ) {
+					pat_matches++;
+					pat_found[pat] = start;
+					break;
 				}
 			}
+			/* 5.2. Pattern found */
+			if ( pat_found[pat] != (unsigned long)NOT_FOUND ) {
+				// Critical section
+				#pragma omp critical
+				/* 4.2.1. Increment the number of pattern matches on the sequence positions */
+				increment_matches( pat, pat_found, pat_length, seq_matches );
+			}
 		}
+	}
 
 	/* 7. Check sums */
 	unsigned long checksum_matches = 0;

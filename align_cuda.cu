@@ -71,22 +71,32 @@ __global__ void sequencer(unsigned long *g_seq_length, int *g_pat_number, char *
     int pat;
     unsigned long lind;
 
-	// Get the pattern number
+	// Get the process number
     int tid = blockIdx.x * blockDim.x + threadIdx.x; 
-    // Check if the thread is within the number of patterns
+    
+	// Check if the thread is within the number of patterns
 	if (tid < *g_pat_number) {
+
+		// Get the pattern number
         pat = tid;
-        for( start=0; start <= *g_seq_length - d_pat_length[pat]; start++) {
-            for( lind=0; lind<d_pat_length[pat]; lind++) {
+
+		/* 5.1. For each posible starting position */
+		for( start=0; start <= *g_seq_length - d_pat_length[pat]; start++) {
+             /* 5.1.1. For each pattern element */
+			for( lind=0; lind<d_pat_length[pat]; lind++) {
+				/* Stop this test when different nucleotids are found */
                 if ( g_sequence[start + lind] != d_pattern[pat][lind] ) break;
             }
+            /* 5.1.2. Check if the loop ended with a match */
             if ( lind == d_pat_length[pat] ) {
                 atomicAdd(g_pat_matches, 1);
                 atomicExch((unsigned long long*)&g_pat_found[pat], (unsigned long long)start);
                 break;
             }
         }
+		/* 5.2. Pattern found */
         if ( g_pat_found[pat] != (unsigned long)NOT_FOUND ) {
+            /* 4.2.1. Increment the number of pattern matches on the sequence positions */
             increment_matches( pat, g_pat_found, d_pat_length, g_seq_matches );
         }
 	}
@@ -418,7 +428,7 @@ int main(int argc, char *argv[]) {
 		seq_matches[lind] = NOT_FOUND;
 	}
 
-	// Allocate GPU memory
+	// Allocate and copy data to the GPU memory
 	unsigned long *g_seq_length;
 	int *g_pat_number;
 	char *g_sequence;
@@ -426,15 +436,13 @@ int main(int argc, char *argv[]) {
 	int *g_pat_matches;
 	unsigned long *g_pat_found;
 
-	// Copy data structures to GPU 
-	CUDA_CHECK_FUNCTION(cudaMalloc(&g_seq_matches, seq_length * sizeof(int)));
-	CUDA_CHECK_FUNCTION(cudaMalloc(&g_pat_matches, sizeof(int)));
-	CUDA_CHECK_FUNCTION(cudaMalloc(&g_pat_found, pat_number * sizeof(unsigned long)));
 	CUDA_CHECK_FUNCTION(cudaMalloc(&g_seq_length, sizeof(unsigned long)));
 	CUDA_CHECK_FUNCTION(cudaMalloc(&g_pat_number, sizeof(int)));
 	CUDA_CHECK_FUNCTION(cudaMalloc(&g_sequence, seq_length * sizeof(char)));
+	CUDA_CHECK_FUNCTION(cudaMalloc(&g_seq_matches, seq_length * sizeof(int)));
+	CUDA_CHECK_FUNCTION(cudaMalloc(&g_pat_matches, sizeof(int)));
+	CUDA_CHECK_FUNCTION(cudaMalloc(&g_pat_found, pat_number * sizeof(unsigned long)));
 
-	// Copy data to GPU
 	CUDA_CHECK_FUNCTION(cudaMemcpy(g_seq_length, &seq_length, sizeof(unsigned long), cudaMemcpyHostToDevice));
 	CUDA_CHECK_FUNCTION(cudaMemcpy(g_pat_number, &pat_number, sizeof(int), cudaMemcpyHostToDevice));
 	CUDA_CHECK_FUNCTION(cudaMemcpy(g_sequence, sequence, seq_length * sizeof(char), cudaMemcpyHostToDevice));
@@ -442,20 +450,21 @@ int main(int argc, char *argv[]) {
 	int init_value = 0;
 	CUDA_CHECK_FUNCTION(cudaMemcpy(g_pat_matches, &init_value, sizeof(int), cudaMemcpyHostToDevice));
 	CUDA_CHECK_FUNCTION(cudaMemcpy(g_pat_found, pat_found, pat_number * sizeof(unsigned long), cudaMemcpyHostToDevice));
+	
 	CUDA_CHECK_FUNCTION(cudaMemcpy(d_pat_length, pat_length, pat_number * sizeof(unsigned long), cudaMemcpyHostToDevice));
 
-	// Launch sequencer kernel
+	// Launch the kernel
 	sequencer<<<ceil(pat_number/1024.0), 1024>>>(g_seq_length, g_pat_number, g_sequence,
 						 d_pat_length, d_pattern, g_seq_matches, g_pat_matches, g_pat_found);
 
 	CUDA_CHECK_FUNCTION(cudaDeviceSynchronize());
 
-	// Copy results from GPU to CPU
+	// Copy the results back to the host
 	CUDA_CHECK_FUNCTION(cudaMemcpy(seq_matches, g_seq_matches, seq_length * sizeof(int), cudaMemcpyDeviceToHost));
 	CUDA_CHECK_FUNCTION(cudaMemcpy(&pat_matches, g_pat_matches, sizeof(int), cudaMemcpyDeviceToHost));
 	CUDA_CHECK_FUNCTION(cudaMemcpy(pat_found, g_pat_found, pat_number * sizeof(unsigned long), cudaMemcpyDeviceToHost));
 
-	// Free GPU memory
+	// Free the GPU memory
 	CUDA_CHECK_FUNCTION(cudaFree(g_seq_matches));
 	CUDA_CHECK_FUNCTION(cudaFree(g_pat_matches));
 	CUDA_CHECK_FUNCTION(cudaFree(g_pat_found));

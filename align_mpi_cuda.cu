@@ -15,7 +15,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<limits.h>
-#include<sys/time.h>
+#include<sys/time.h> 
 #include<mpi.h>
 
 /* Headers for the CUDA assignment versions */
@@ -71,10 +71,13 @@ __global__ void sequencer(unsigned long *g_seq_length, int *g_pat_number, char *
     int pat;
     unsigned long lind;
 
+	// Get the process number 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
+	// Check if the thread is within the number of patterns
     if (tid < *g_pat_number) {
 
+		// Get the pattern number
         pat = tid + *g_my_first_pattern;
 		
 		/* 5.1. For each posible starting position */
@@ -98,7 +101,6 @@ __global__ void sequencer(unsigned long *g_seq_length, int *g_pat_number, char *
             increment_matches( pat, g_pat_found, d_pat_length, g_seq_matches );
         }
 	}
-
 }
 
 /*
@@ -386,21 +388,20 @@ int main(int argc, char *argv[]) {
  *
  */
 
-
+	// Inizialize MPI size
     int size;
 	MPI_Comm_size( MPI_COMM_WORLD, &size );
 
     cudaSetDevice(rank);
 
+	// Each rank takes a number and the start pattern to search
 	int my_pat_number = pat_number/size;
 	int resto = pat_number % size;
-
 	int my_first_pattern = rank * my_pat_number;
-	
+
 	if(rank == size - 1){
 		my_pat_number += resto;
 	}
-
 	MPI_Barrier( MPI_COMM_WORLD );
 
 	/* 2.1. Allocate and fill sequence */
@@ -409,14 +410,13 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr,"\n-- Error allocating the sequence for size: %lu\n", seq_length );
 		exit( EXIT_FAILURE );
 	}
-    
+
+	// Only rank 0 generates the sequence and sends it to all other processes
 	if (rank == 0) {
 	    random = rng_new( seed );
 	    generate_rng_sequence( &random, prob_G, prob_C, prob_A, sequence, seq_length);
     }
-
     MPI_Bcast(sequence, seq_length, MPI_CHAR, 0, MPI_COMM_WORLD);
-
 	MPI_Barrier( MPI_COMM_WORLD );
 
 #ifdef DEBUG
@@ -438,6 +438,7 @@ int main(int argc, char *argv[]) {
 #endif // DEBUG
 
 	/* 2.3.2. Other results related to the main sequence */
+	// Each rank allocate its own seq_matches
 	int *seq_matches;
 	seq_matches = (int *)malloc( sizeof(int) * seq_length );
 	if ( seq_matches == NULL ) {
@@ -445,10 +446,13 @@ int main(int argc, char *argv[]) {
 		exit( EXIT_FAILURE );
 	}
 
+	/* 4. Initialize ancillary structures */
+	// Each rank allocate its own pat_found and initialize it to NOT_FOUND
 	for( ind=0; ind<pat_number; ind++) {
 		pat_found[ind] = (unsigned long)NOT_FOUND;
 	}
 
+	// Each rank allocate its own seq_matches and initialize it to NOT_FOUND
 	for( lind=0; lind<seq_length; lind++) {
 		seq_matches[lind] = NOT_FOUND;
 	}
@@ -456,14 +460,13 @@ int main(int argc, char *argv[]) {
 	MPI_Barrier( MPI_COMM_WORLD );
 
 
-	unsigned long *g_seq_length;
-	int *g_my_pat_number;
-	char *g_sequence;
-
+	// Allocate and copy data to the GPU memory
 	int *g_seq_matches;
 	int *g_pat_matches;
 	unsigned long *g_pat_found;
-
+	unsigned long *g_seq_length;
+	int *g_my_pat_number;
+	char *g_sequence;
 	int *g_my_first_pattern;
 
 	CUDA_CHECK_FUNCTION( cudaMalloc(&g_seq_matches, seq_length * sizeof(int)) );
@@ -474,25 +477,28 @@ int main(int argc, char *argv[]) {
 	CUDA_CHECK_FUNCTION( cudaMalloc(&g_sequence, seq_length * sizeof(char)) );
 	CUDA_CHECK_FUNCTION( cudaMalloc(&g_my_first_pattern, sizeof(int)) );
 
-	CUDA_CHECK_FUNCTION( cudaMemcpy(g_seq_length, &seq_length, sizeof(unsigned long), cudaMemcpyHostToDevice) );
-	CUDA_CHECK_FUNCTION( cudaMemcpy(g_my_pat_number, &my_pat_number, sizeof(int), cudaMemcpyHostToDevice) );
-	CUDA_CHECK_FUNCTION( cudaMemcpy(g_sequence, sequence, seq_length * sizeof(char), cudaMemcpyHostToDevice) );
 	CUDA_CHECK_FUNCTION( cudaMemcpy(g_seq_matches, seq_matches, seq_length * sizeof(int), cudaMemcpyHostToDevice) );
 	int init_value = 0;
 	CUDA_CHECK_FUNCTION( cudaMemcpy(g_pat_matches, &init_value, sizeof(int), cudaMemcpyHostToDevice) );
 	CUDA_CHECK_FUNCTION( cudaMemcpy(g_pat_found, pat_found, pat_number * sizeof(unsigned long), cudaMemcpyHostToDevice) );
+	CUDA_CHECK_FUNCTION( cudaMemcpy(g_seq_length, &seq_length, sizeof(unsigned long), cudaMemcpyHostToDevice) );
+	CUDA_CHECK_FUNCTION( cudaMemcpy(g_my_pat_number, &my_pat_number, sizeof(int), cudaMemcpyHostToDevice) );
+	CUDA_CHECK_FUNCTION( cudaMemcpy(g_sequence, sequence, seq_length * sizeof(char), cudaMemcpyHostToDevice) );
 	CUDA_CHECK_FUNCTION( cudaMemcpy(g_my_first_pattern, &my_first_pattern, sizeof(int), cudaMemcpyHostToDevice) );
-	CUDA_CHECK_FUNCTION( cudaMemcpy(d_pat_length, pat_length, pat_number * sizeof(unsigned long), cudaMemcpyHostToDevice) );
 
+	CUDA_CHECK_FUNCTION( cudaMemcpy(d_pat_length, pat_length, pat_number * sizeof(unsigned long), cudaMemcpyHostToDevice) );
 	MPI_Barrier(MPI_COMM_WORLD);
 
+	// Launch the kernel
 	sequencer<<<ceil(my_pat_number/1024.0), 1024>>>(g_seq_length, g_my_pat_number, g_sequence, d_pat_length, d_pattern, g_seq_matches, g_pat_matches, g_pat_found, g_my_first_pattern);
     cudaDeviceSynchronize();
 
+	// Copy the results back to the host
 	CUDA_CHECK_FUNCTION( cudaMemcpy(seq_matches, g_seq_matches, seq_length * sizeof(int), cudaMemcpyDeviceToHost) );
 	CUDA_CHECK_FUNCTION( cudaMemcpy(&pat_matches, g_pat_matches, sizeof(int), cudaMemcpyDeviceToHost) );
 	CUDA_CHECK_FUNCTION( cudaMemcpy(pat_found, g_pat_found, pat_number * sizeof(unsigned long), cudaMemcpyDeviceToHost) );
 
+	// Free the GPU memory
 	CUDA_CHECK_FUNCTION( cudaFree(g_seq_matches) );
 	CUDA_CHECK_FUNCTION( cudaFree(g_pat_matches) );
 	CUDA_CHECK_FUNCTION( cudaFree(g_pat_found) );
@@ -503,19 +509,22 @@ int main(int argc, char *argv[]) {
 	cudaDeviceSynchronize();
 
 
-	// Tutti i rank inviano i propri seq_matches al rank 0
+	// Each rank sends its own seq_matches to rank 0
 	if(rank > 0){
 		MPI_Send(seq_matches, seq_length, MPI_INT, 0, 0, MPI_COMM_WORLD);
 	}
 
-    // Il rank 0 si occuperà di sommare i seq_matches di tutti i rank
+	// Rank 0 reveices all the seq_matches from all the other ranks and sums them up
     if (rank == 0) {
+		// Allocate temporary array used to calculate the final result
 		int *local_seq_matches;
 		local_seq_matches = (int *)malloc( sizeof(int) * seq_length );
-		
+
+		// For each rank
 		for (int i = 1; i < size; i++) {
 			MPI_Recv(local_seq_matches, seq_length, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			
+			// Sum the results
 			for (unsigned long j = 0; j < seq_length; j++) {
 				if (seq_matches[j] >= 0 && local_seq_matches[j] >= 0) {
 					seq_matches[j] = seq_matches[j] + local_seq_matches[j] + 1;
@@ -532,6 +541,7 @@ int main(int argc, char *argv[]) {
 	}
 	MPI_Barrier( MPI_COMM_WORLD );
 	
+	// Each rank sends its own pat_found to rank 0 but only the data that he processed
 	int send_counts[size];
 	send_counts[rank] = my_pat_number;
 
@@ -543,18 +553,17 @@ int main(int argc, char *argv[]) {
 
 	MPI_Barrier( MPI_COMM_WORLD );
 
+	// Rank 0 receive all the pat_found from all the other ranks  
 	MPI_Gatherv(pat_found + my_first_pattern, my_pat_number, MPI_UNSIGNED_LONG, pat_found, send_counts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
 	
-	// Ognuno invia al rank 0 il numero di pattern trovati sommandoli con la reduce
+	// Each rank sends its own pat_matches to rank 0 and rank 0 sums them up
 	int total_pat_matches = 0;
 	MPI_Reduce(&pat_matches, &total_pat_matches, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
-	// Il rank 0 assegna il valore di total_pat_matches a pat_matches
+	// Rank 0 assing the value of total_pat_matches to pat_matches
 	if (rank == 0) {
 		pat_matches = total_pat_matches;
 	}
-
-
 	MPI_Barrier( MPI_COMM_WORLD );
 	
 	/* 7. Check sums */

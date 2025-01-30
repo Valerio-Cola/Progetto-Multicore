@@ -66,7 +66,9 @@ __device__ void increment_matches( int pat, unsigned long *pat_found, unsigned l
 	}
 }
 
-__global__ void sequencer(unsigned long *g_seq_length, int *g_pat_number, char *g_sequence, unsigned long *d_pat_length, char **d_pattern, int *g_seq_matches, int *g_pat_matches, unsigned long *g_pat_found, int *g_my_first_pattern) { 
+__global__ void sequencer(unsigned long *g_seq_length, int *g_pat_number, char *g_sequence, 
+						 unsigned long *d_pat_length, char **d_pattern, int *g_seq_matches,
+						 int *g_pat_matches, unsigned long *g_pat_found, int *g_my_first_pattern) { 
     unsigned long start;
     int pat;
     unsigned long lind;
